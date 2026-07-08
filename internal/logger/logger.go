@@ -14,10 +14,21 @@ const (
 	TypeHandlerText typeHandler = "text"
 )
 
+const (
+	// LevelDebug уровень логирования: Debug
+	LevelDebug slog.Level = -4
+	// LevelInfo уровень логирования: Info
+	LevelInfo slog.Level = 0
+	// LevelWarn уровень логирования: Warn
+	LevelWarn slog.Level = 4
+	// LevelError уровень логирования: Error
+	LevelError slog.Level = 8
+)
+
 // NewLogger конструктор
-func NewLogger(typeHandler typeHandler) *slog.Logger {
+func NewLogger(typeHandler typeHandler, l slog.Level) *slog.Logger {
 	var level slog.LevelVar
-	level.Set(slog.LevelDebug)
+	level.Set(l)
 
 	replaceAttr := func(groups []string, attr slog.Attr) slog.Attr {
 		if attr.Key == slog.TimeKey {
@@ -37,13 +48,17 @@ func NewLogger(typeHandler typeHandler) *slog.Logger {
 		ReplaceAttr: replaceAttr,
 	})
 
+	var logger *slog.Logger
+
 	switch typeHandler {
 	case TypeHandlerJSON:
-		return slog.New(jsonHandler)
+		logger = slog.New(jsonHandler)
 	case TypeHandlerText:
-		return slog.New(textHandler)
+		logger = slog.New(textHandler)
 	default:
-		return slog.Default()
+		logger = slog.Default()
 
 	}
+	slog.SetDefault(logger)
+	return logger
 }

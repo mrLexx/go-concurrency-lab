@@ -2,6 +2,7 @@ package workerpool
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -25,27 +26,29 @@ type Result struct {
 	Value string
 }
 
-// workerPool структура самого воркпула
-type workerPool struct {
+// StatsSnapshot структура среза по статистике успех/не успех
+type StatsSnapshot struct {
+	Success    int
+	Fails      int
+	WorkerJobs map[int]int
+}
+
+// WorkerPool структура самого воркпула
+type WorkerPool struct {
 	logger *slog.Logger
 	stats  Stats
 
 	workers int
 	limit   int
 
+	done      chan struct{}
 	jobs      chan Job
 	results   chan Result
 	errs      chan error
 	semaphore chan struct{}
 
-	wg sync.WaitGroup
-}
-
-// StatsSnapshot структура среза по статистике успех/не успех
-type StatsSnapshot struct {
-	Success    int
-	Fails      int
-	WorkerJobs map[int]int
+	wg   sync.WaitGroup
+	once sync.Once
 }
 
 // NewWorkerPool создание экземпляра воркпула
@@ -57,12 +60,12 @@ func NewWorkerPool(
 	jobCap,
 	resultCap,
 	errCap int,
-) *workerPool {
+) *WorkerPool {
 	if limit == 0 {
 		limit = workers
 	}
 
-	return &workerPool{
+	return &WorkerPool{
 		logger: logger,
 		stats:  stats,
 
@@ -73,12 +76,18 @@ func NewWorkerPool(
 		results:   make(chan Result, resultCap),
 		errs:      make(chan error, errCap),
 		semaphore: make(chan struct{}, limit),
+		done:      make(chan struct{}),
 	}
 }
 
+func (p *WorkerPool) closeDone() {
+	p.once.Do(func() {
+		close(p.done)
+	})
+}
+
 // callExternalService вызов внешнего сервиса, с поддержкой контекста отмены
-func (p *workerPool) callExternalService(
-	ctx context.Context,
+func (p *WorkerPool) callExternalService(
 	job Job,
 	extService ExternalServiceFunc,
 ) (Result, error) {
@@ -103,17 +112,16 @@ func (p *workerPool) callExternalService(
 	select {
 	case o := <-done:
 		return o.result, o.err
-	case <-ctx.Done():
-		logger.Debug(
+	case <-p.done:
+		logger.Warn(
 			"Не удалось отправить результат callExternalService: контекст отменён",
 		)
-		return Result{}, ctx.Err()
+		return Result{}, errors.New("не удалось отправить результат callExternalService: контекст отменён")
 	}
 }
 
 // processJob обработка "работы"
-func (p *workerPool) processJob(
-	ctx context.Context,
+func (p *WorkerPool) processJob(
 	workerID int,
 	job Job,
 	extService ExternalServiceFunc,
@@ -125,21 +133,21 @@ func (p *workerPool) processJob(
 			select {
 			case p.errs <- NewError(workerID, job.ID, err):
 				p.stats.IncFail()
-			case <-ctx.Done():
-				p.logger.Error("Ошибка после panic потеряна из-за отмены контекста",
+			case <-p.done:
+				p.logger.Warn("Ошибка после panic потеряна из-за отмены контекста",
 					"workerID", workerID, "jobID", job.ID, "err", err)
 			}
 		}
 	}()
 
-	result, err := p.callExternalService(ctx, job, extService)
+	result, err := p.callExternalService(job, extService)
 	if err != nil {
 		select {
 		case p.errs <- NewError(workerID, job.ID, err):
 			p.stats.IncFail()
 			return
-		case <-ctx.Done():
-			p.logger.Error("Ошибка после отработки extService потеряна из-за отмены контекста",
+		case <-p.done:
+			p.logger.Warn("Ошибка после отработки extService потеряна из-за отмены контекста",
 				"workerID", workerID, "jobID", job.ID, "err", err)
 			return
 		}
@@ -150,8 +158,8 @@ func (p *workerPool) processJob(
 	select {
 	case p.results <- result:
 		p.stats.IncWorkerJobs(workerID)
-	case <-ctx.Done():
-		p.logger.Debug(
+	case <-p.done:
+		p.logger.Warn(
 			"Не удалось отправить результат job: контекст отменён",
 			"workerID", workerID,
 			"jobID", job.ID,
@@ -161,8 +169,7 @@ func (p *workerPool) processJob(
 }
 
 // worker сам воркер
-func (p *workerPool) worker(
-	ctx context.Context,
+func (p *WorkerPool) worker(
 	workerID int,
 	extService ExternalServiceFunc,
 ) {
@@ -178,20 +185,19 @@ func (p *workerPool) worker(
 			logger.Debug("Ждем открытия канала")
 			p.semaphore <- struct{}{}
 			logger.Debug("Бронируем канал")
-			p.processJob(ctx, workerID, job, extService)
+			p.processJob(workerID, job, extService)
 			<-p.semaphore
 			logger.Debug("Канал открыт")
 
-		case <-ctx.Done():
-			logger.Debug("Worker остановлен по отмене контекста", "workerID", workerID)
+		case <-p.done:
+			logger.Warn("Worker остановлен по отмене контекста", "workerID", workerID)
 			return
 		}
 	}
 }
 
 // Start запускает воркеры в работу
-func (p *workerPool) Start(
-	ctx context.Context,
+func (p *WorkerPool) Start(
 	extService ExternalServiceFunc,
 ) {
 	p.wg.Add(p.workers)
@@ -202,51 +208,81 @@ func (p *workerPool) Start(
 			}()
 
 			workerID := i + 1
-			p.worker(ctx, workerID, extService)
+			p.worker(workerID, extService)
 		}()
 	}
 }
 
+func (p *WorkerPool) Shutdown(ctx context.Context) error {
+	p.logger.Debug("Начало graceful shutdown")
+
+	workersDone := make(chan struct{})
+	go func() {
+		defer close(workersDone)
+		p.wg.Wait()
+	}()
+
+	var err error
+
+	select {
+	case <-workersDone:
+	case <-ctx.Done():
+		p.logger.Warn("Таймаут shutdown, принудительная остановка воркеров")
+		p.closeDone()
+		err = ctx.Err()
+	}
+
+	return err
+}
+
 // Put размещает работу в очередь на обработку
-func (p *workerPool) Put(ctx context.Context, job Job) error {
+func (p *WorkerPool) Put(job Job) error {
 	select {
 
 	case p.jobs <- job:
 		return nil
-	case <-ctx.Done():
-		p.logger.Debug(
+	case <-p.done:
+		p.logger.Warn(
 			"Не удалось отправить job на обработку: контекст отменён",
 			"jobID", job.ID,
 		)
-		return ctx.Err()
+		return fmt.Errorf("не удалось отправить job на обработку: контекст отменён: jobID: %d", job.ID)
 	}
 }
 
 // Results дает доступ к каналу с результатами
-func (p *workerPool) Results() <-chan Result {
+func (p *WorkerPool) Results() <-chan Result {
 	return p.results
 }
 
 // Errs Дает доступ к каналу с ошибками
-func (p *workerPool) Errs() <-chan error {
+func (p *WorkerPool) Errs() <-chan error {
 	return p.errs
 }
 
 // CloseJobs закрывает канал с работами
-func (p *workerPool) CloseJobs() {
+func (p *WorkerPool) CloseJobs() {
 	close(p.jobs)
 }
 
 // Wait Ожидает завершения работы всех воркеров и каналов
-func (p *workerPool) Wait() {
-	p.wg.Wait()
-	close(p.results)
-	close(p.errs)
-	close(p.semaphore)
+func (p *WorkerPool) Wait() {
+	wait := make(chan struct{})
+
+	go func() {
+		defer close(wait)
+
+		p.wg.Wait()
+		close(p.results)
+		close(p.errs)
+		close(p.semaphore)
+	}()
+
+	<-wait
 }
 
 // GetStatsSnapshot получает статистику по ошибкам/количеству успешных работа на задачу
-func (p *workerPool) GetStatsSnapshot() StatsSnapshot {
+func (p *WorkerPool) GetStatsSnapshot() StatsSnapshot {
 	return StatsSnapshot{
 		Success: int(p.stats.SuccessCount()),
 		Fails:   int(p.stats.FailCount()),
