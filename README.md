@@ -98,5 +98,6 @@ task --list
 * `task golangci-lint:install` — Устанавливает golangci-lint
 * `task install` — Устанавливает все инструменты
 * `task lint` — Запускает golangci-lint
+* `task run` — Запускает проект
 * `task test` — Запускает unit-тесты с race-детектором (без API-тестов из order/tests)
 <!-- TASKS_END -->

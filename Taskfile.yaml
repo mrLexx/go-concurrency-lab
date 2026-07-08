@@ -101,3 +101,10 @@ tasks:
         ' README.md > README.md.tmp
 
         mv README.md.tmp README.md
+
+  run:
+    desc: "Запускает проект"
+    cmds:
+      - echo '🚀 запускаем проект...'
+      - go run ./cmd/app/.
+
