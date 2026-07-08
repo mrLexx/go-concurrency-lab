@@ -154,8 +154,8 @@ linters: # Список активных и отключённых линтер�
       rules:
         - name: empty-block
         - name: var-naming
-        # - name: exported
-        #   severity: warning
+        - name: exported
+          severity: warning
         # - name: unhandled-error
         #   arguments: ["fmt.Printf", "myFunction"]
 

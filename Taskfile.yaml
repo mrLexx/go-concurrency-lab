@@ -11,6 +11,8 @@ vars:
   GCI: '{{.BIN_DIR}}/gci'
   GOFUMPT: '{{.BIN_DIR}}/gofumpt'
 
+  MODULE_NAME: github.com/mrLexx/go-concurrency-lab
+
 tasks:
   formatters:install:
     desc: "Устанавливает gofumpt и gci"
@@ -62,3 +64,40 @@ tasks:
     desc: "Запускает unit-тесты с race-детектором (без API-тестов из order/tests)"
     cmds:
       - go test -v -race -count=1 ./...
+
+  fix:diff:
+    desc: "Производит предварительный просмотр автоматических исправлений"
+    cmds:
+      - echo '🔍 Проверяем на возможность исправления...'
+      - go fix -diff ./...
+
+  docs:
+    desc: Обновить список команд в README.md
+    cmds:
+      - |
+        jq -r '
+          .tasks
+          | sort_by(.name)
+          | .[]
+          | select(.desc != null and .desc != "")
+          | "* `task \(.name)` — \(.desc)"
+        ' < <(task --json --list) >/tmp/tasks.md
+
+        awk '
+        BEGIN {skip=0}
+        /<!-- TASKS_START -->/ {
+            print
+            while ((getline line < "/tmp/tasks.md") > 0)
+                print line
+            skip=1
+            next
+        }
+        /<!-- TASKS_END -->/ {
+            skip=0
+            print
+            next
+        }
+        !skip
+        ' README.md > README.md.tmp
+
+        mv README.md.tmp README.md
