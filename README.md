@@ -103,10 +103,16 @@ task --list
 * `task test` — Запускает unit-тесты с race-детектором (без API-тестов из order/tests)
 <!-- TASKS_END -->
 
-### 2. Запуск без task
+### 3. Порядок запуска
 
-Для запуска проекта без task:
+Обновляем зависимости:
 
 ```bash
-go run ./cmd/app/.
+task deps:update
+```
+
+Запускаем сам проект
+
+```bash
+task run
 ```
