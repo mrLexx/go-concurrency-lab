@@ -11,6 +11,10 @@ vars:
   GCI: '{{.BIN_DIR}}/gci'
   GOFUMPT: '{{.BIN_DIR}}/gofumpt'
 
+  COVERAGE_DIR: '{{.ROOT_DIR}}/coverage'
+  COVERAGE_FILE: '{{.COVERAGE_DIR}}/coverage.out'
+  COVERAGE_THRESHOLD: '40'
+
   MODULE_NAME: github.com/mrLexx/go-concurrency-lab
 
 tasks:
@@ -60,10 +64,11 @@ tasks:
       - echo '🔄 Обновляем зависимости...'
       - go mod tidy -compat={{.GO_VERSION}}
 
-  test:
-    desc: "Запускает unit-тесты с race-детектором (без API-тестов из order/tests)"
+  fix:apply:
+    desc: "Производит предварительный просмотр автоматических исправлений"
     cmds:
-      - go test -v -race -count=1 ./...
+      - echo '🔍 Проверяем на возможность исправления...'
+      - go fix ./...
 
   fix:diff:
     desc: "Производит предварительный просмотр автоматических исправлений"
@@ -73,8 +78,10 @@ tasks:
 
   docs:
     desc: Обновить список команд в README.md
+    silent: true
     cmds:
       - |
+        echo '📄 записываем команды в README.md...'
         jq -r '
           .tasks
           | sort_by(.name)
@@ -101,10 +108,81 @@ tasks:
         ' README.md > README.md.tmp
 
         mv README.md.tmp README.md
-
   run:
     desc: "Запускает проект"
+    silent: true
     cmds:
       - echo '🚀 запускаем проект...'
       - go run ./cmd/app/.
 
+  coverage:clean:
+    desc: "Очищает директорию с отчётами покрытия"
+    internal: true
+    cmds:
+      - rm -rf {{.COVERAGE_DIR}}
+      - mkdir -p {{.COVERAGE_DIR}}
+
+  coverage:threshold:
+    desc: "Проверяет соответствие покрытия порогу"
+    internal: true
+    vars:
+      COVERAGE:
+        sh: go tool cover -func={{.COVERAGE_FILE}} | tail -n1 | awk '{print $NF}' | tr -d '%'
+    preconditions:
+      - sh: test -f {{.COVERAGE_FILE}}
+        msg: "Файл покрытия не найден. Запустите task test:coverage"
+    cmds:
+      - echo "🧾 Общее покрытие:{{.COVERAGE}}% | Порог:{{.COVERAGE_THRESHOLD}}%"
+      - cmd: test $(echo "{{.COVERAGE}} >= {{.COVERAGE_THRESHOLD}}" | bc) -eq 1
+      - echo "✅ Покрытие соответствует порогу"
+
+  coverage:html:
+    desc: "Генерирует HTML-отчёт покрытия"
+    deps: [test:coverage]
+    vars:
+      HTML_FILE: '{{.COVERAGE_DIR}}/coverage.html'
+    cmds:
+      - go tool cover -html={{.COVERAGE_FILE}} -o {{.HTML_FILE}}
+      - echo "🌐 Отчёт сохранён в {{.HTML_FILE}}"
+      - cmd: open {{.HTML_FILE}}
+        platforms: [darwin]
+      - cmd: xdg-open {{.HTML_FILE}}
+        platforms: [linux]
+      - cmd: start {{.HTML_FILE}}
+        platforms: [windows]
+
+  coverage:check:
+    desc: "Проверяет покрытие без запуска тестов"
+    cmds:
+      - task: coverage:threshold
+  
+  test:coverage:
+    desc: "Тесты с покрытием"
+    deps: [coverage:clean]
+    vars:
+      MOD:
+        sh: go list -m
+      TARGET_PACKAGES:
+        sh: go list ./... | grep -vE "^{{.MOD}}/(cmd)(/|$)" | tr '\n' ',' | sed 's/,$//'
+      TEST_PACKAGES:
+        sh: go list ./... | grep -vE "^{{.MOD}}/(cmd)(/|$)" | tr '\n' ' ' | sed 's/ $//'
+    cmds:
+      - echo "📦 Целевые пакеты:{{.TARGET_PACKAGES}}"
+      - |
+        go test -v -race -covermode=atomic \
+          -coverprofile={{.COVERAGE_FILE}} \
+          -coverpkg={{.TARGET_PACKAGES}} \
+          {{.TEST_PACKAGES}}
+      - echo "📊 Покрытие по функциям:"
+      - go tool cover -func={{.COVERAGE_FILE}}
+      - task: coverage:threshold
+
+  test:
+    desc: "Запускает unit-тесты с race-детектором"
+    vars:
+      MOD:
+        sh: go list -m
+      TEST_PACKAGES:
+        sh: go list ./... | grep -vE "^{{.MOD}}/(cmd)(/|$)" | tr '\n' ' ' | sed 's/ $//'
+    cmds:
+      - go test -v -race -count=1 {{.TEST_PACKAGES}}
