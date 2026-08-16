@@ -15,23 +15,23 @@ import (
 	wp "github.com/mrLexx/go-concurrency-lab/internal/workerpool"
 )
 
-func processResult(logger *slog.Logger, resultCh <-chan wp.Result) {
+func processResult(resultCh <-chan wp.Result) {
 	for r := range resultCh {
-		logger.Info("Обработка результата", "воркер№", r.JobID)
+		slog.Info("Обработка результата", "воркер№", r.JobID)
 	}
 }
 
-func processErrors(logger *slog.Logger, panicsCh <-chan error) {
+func processErrors(panicsCh <-chan error) {
 	for e := range panicsCh {
 		if poolErr, ok := errors.AsType[*wp.Error](e); ok {
-			logger.Error(
+			slog.Error(
 				"Ошибка...",
 				"WorkerID", poolErr.WorkerID(),
 				"JobID", poolErr.JobID(),
 				"Техт", poolErr.Error(),
 			)
 		} else {
-			logger.Error("Ошибка", "неизвестная ошибка", e)
+			slog.Error("Ошибка", "неизвестная ошибка", e)
 		}
 	}
 }
@@ -50,17 +50,18 @@ func extService(_ wp.Job) (wp.Result, error) {
 	return wp.Result{}, nil
 }
 
-func sendJobs(logger *slog.Logger, pool *wp.WorkerPool, n int) {
-	logger.Debug("Начинаем рассылать задачи")
+func sendJobs(pool *wp.WorkerPool, n int) {
+	slog.Debug("Начинаем рассылать задачи")
 	for i := range n {
 		time.Sleep(1 * time.Second)
 		jobID := i + 1
-		logger.Debug("Задача", "id", jobID)
+		slog.Debug("Задача", "id", jobID)
 		if err := pool.Put(wp.Job{ID: jobID, Value: wp.Task{}}); err != nil {
 			break
 		}
 	}
-	logger.Debug("Закрываем канал с работой")
+
+	slog.Debug("Закрываем канал с работой")
 	pool.CloseJobs()
 }
 
@@ -68,13 +69,12 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	logger := logger.NewLogger(
-		logger.TypeHandlerText,
+	logger.Init(
 		logger.LevelInfo,
+		logger.HandlerText,
 	)
-	slog.SetDefault(logger)
 
-	n := 5000
+	n := 10
 
 	workers := 10
 	limit := 10
@@ -83,7 +83,6 @@ func main() {
 	errCap := 0
 
 	pool := wp.NewWorkerPool(
-		logger,
 		stats.NewStats(),
 		workers,
 		limit,
@@ -99,13 +98,13 @@ func main() {
 	resultsWg.Add(1)
 	go func() {
 		defer resultsWg.Done()
-		processResult(logger, pool.Results())
+		processResult(pool.Results())
 	}()
 
 	errsWg.Add(1)
 	go func() {
 		defer errsWg.Done()
-		processErrors(logger, pool.Errs())
+		processErrors(pool.Errs())
 	}()
 
 	pool.Start(extService)
@@ -114,7 +113,7 @@ func main() {
 	jobsWg.Add(1)
 	go func() {
 		defer jobsWg.Done()
-		sendJobs(logger, pool, n)
+		sendJobs(pool, n)
 	}()
 
 	// Ждем когда задачи все отошлются и отработает воркерпул, для штатного завершения
@@ -128,27 +127,27 @@ func main() {
 	// Смотрим что вперед завершится: или воркерпул или прилетит отмена контекста
 	select {
 	case <-ctx.Done():
-		logger.Info("Получен сигнал остановки")
+		slog.Info("Получен сигнал остановки")
 
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 
 		if err := pool.Shutdown(shutdownCtx); err != nil {
-			logger.Error("Остановка WorkPool", "err", err)
+			slog.Error("Остановка WorkPool", "err", err)
 		}
 	case <-poolFinished:
-		logger.Info("Все job обработаны штатно")
+		slog.Info("Все job обработаны штатно")
 	}
 
-	logger.Info("Ждем обработки вспомогательных каналов")
+	slog.Info("Ждем обработки вспомогательных каналов")
 	resultsWg.Wait()
 	errsWg.Wait()
 
-	logger.Info("Работа завершена")
+	slog.Info("Работа завершена")
 
 	s := pool.GetStatsSnapshot()
 
-	logger.Info(
+	slog.Info(
 		"Лог",
 		"fail", s.Fails,
 		"success", s.Success,

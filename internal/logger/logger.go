@@ -5,32 +5,26 @@ import (
 	"os"
 )
 
-type typeHandler string
-
 const (
-	// TypeHandlerJSON тип логера - json
-	TypeHandlerJSON typeHandler = "json"
-	// TypeHandlerText тип логера - text
-	TypeHandlerText typeHandler = "text"
+	// HandlerJSON тип логера - json
+	HandlerJSON string = "json"
+	// HandlerText тип логера - text
+	HandlerText string = "text"
 )
 
 const (
-	// LevelDebug уровень логирования: Debug
-	LevelDebug slog.Level = -4
-	// LevelInfo уровень логирования: Info
-	LevelInfo slog.Level = 0
-	// LevelWarn уровень логирования: Warn
-	LevelWarn slog.Level = 4
-	// LevelError уровень логирования: Error
-	LevelError slog.Level = 8
+	// LevelInfo уровень логирования - информационный
+	LevelInfo string = "info"
+	// LevelDebug уровень логирования - отладочный
+	LevelDebug string = "debug"
+	// LevelWarn уровень логирования - предупредительный
+	LevelWarn string = "warn"
+	// LevelError уровень логирования - ошибочный
+	LevelError string = "error"
 )
 
-// NewLogger конструктор
-func NewLogger(typeHandler typeHandler, l slog.Level) *slog.Logger {
-	var level slog.LevelVar
-	level.Set(l)
-
-	replaceAttr := func(groups []string, attr slog.Attr) slog.Attr {
+func init() {
+	replaceAttrFunc := func(groups []string, attr slog.Attr) slog.Attr {
 		if attr.Key == slog.TimeKey {
 			t := attr.Value.Time()
 			attr.Value = slog.StringValue(t.Format("2006-01-02 15:04:05"))
@@ -38,27 +32,58 @@ func NewLogger(typeHandler typeHandler, l slog.Level) *slog.Logger {
 		return attr
 	}
 
-	jsonHandler := slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{
-		Level:       &level,
-		ReplaceAttr: replaceAttr,
+	textHandler := slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
+		Level:       parseLevel(LevelInfo),
+		ReplaceAttr: replaceAttrFunc,
+	})
+	slog.SetDefault(slog.New(textHandler))
+}
+
+// Init конструктор
+func Init(
+	level string,
+	typeHandler string,
+) {
+	replaceAttrFunc := func(groups []string, attr slog.Attr) slog.Attr {
+		if attr.Key == slog.TimeKey {
+			t := attr.Value.Time()
+			attr.Value = slog.StringValue(t.Format("2006-01-02 15:04:05"))
+		}
+		return attr
+	}
+	jsonHandler := slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
+		Level:       parseLevel(level),
+		ReplaceAttr: replaceAttrFunc,
 	})
 
-	textHandler := slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
-		Level:       &level,
-		ReplaceAttr: replaceAttr,
+	textHandler := slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
+		Level:       parseLevel(level),
+		ReplaceAttr: replaceAttrFunc,
 	})
 
 	var logger *slog.Logger
 
 	switch typeHandler {
-	case TypeHandlerJSON:
+	case HandlerJSON:
 		logger = slog.New(jsonHandler)
-	case TypeHandlerText:
+	case HandlerText:
 		logger = slog.New(textHandler)
 	default:
-		logger = slog.Default()
+		logger = slog.New(textHandler)
 
 	}
 	slog.SetDefault(logger)
-	return logger
+}
+
+func parseLevel(s string) slog.Level {
+	switch s {
+	case LevelDebug:
+		return slog.LevelDebug
+	case LevelWarn:
+		return slog.LevelWarn
+	case LevelError:
+		return slog.LevelError
+	default:
+		return slog.LevelInfo
+	}
 }

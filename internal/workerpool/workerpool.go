@@ -35,8 +35,7 @@ type StatsSnapshot struct {
 
 // WorkerPool структура самого воркпула
 type WorkerPool struct {
-	logger *slog.Logger
-	stats  Stats
+	stats Stats
 
 	workers int
 	limit   int
@@ -53,7 +52,6 @@ type WorkerPool struct {
 
 // NewWorkerPool создание экземпляра воркпула
 func NewWorkerPool(
-	logger *slog.Logger,
 	stats Stats,
 	workers,
 	limit,
@@ -66,8 +64,7 @@ func NewWorkerPool(
 	}
 
 	return &WorkerPool{
-		logger: logger,
-		stats:  stats,
+		stats: stats,
 
 		workers: workers,
 		limit:   limit,
@@ -95,7 +92,6 @@ func (p *WorkerPool) callExternalService(
 		result Result
 		err    error
 	}
-	logger := p.logger.With("jobID", job.ID)
 
 	done := make(chan out, 1)
 	go func() {
@@ -113,8 +109,9 @@ func (p *WorkerPool) callExternalService(
 	case o := <-done:
 		return o.result, o.err
 	case <-p.done:
-		logger.Warn(
+		slog.Warn(
 			"Не удалось отправить результат callExternalService: контекст отменён",
+			"jobID", job.ID,
 		)
 		return Result{}, errors.New("не удалось отправить результат callExternalService: контекст отменён")
 	}
@@ -134,7 +131,7 @@ func (p *WorkerPool) processJob(
 			case p.errs <- NewError(workerID, job.ID, err):
 				p.stats.IncFail()
 			case <-p.done:
-				p.logger.Warn("Ошибка после panic потеряна из-за отмены контекста",
+				slog.Warn("Ошибка после panic потеряна из-за отмены контекста",
 					"workerID", workerID, "jobID", job.ID, "err", err)
 			}
 		}
@@ -147,7 +144,7 @@ func (p *WorkerPool) processJob(
 			p.stats.IncFail()
 			return
 		case <-p.done:
-			p.logger.Warn("Ошибка после отработки extService потеряна из-за отмены контекста",
+			slog.Warn("Ошибка после отработки extService потеряна из-за отмены контекста",
 				"workerID", workerID, "jobID", job.ID, "err", err)
 			return
 		}
@@ -159,7 +156,7 @@ func (p *WorkerPool) processJob(
 	case p.results <- result:
 		p.stats.IncWorkerJobs(workerID)
 	case <-p.done:
-		p.logger.Warn(
+		slog.Warn(
 			"Не удалось отправить результат job: контекст отменён",
 			"workerID", workerID,
 			"jobID", job.ID,
@@ -173,24 +170,25 @@ func (p *WorkerPool) worker(
 	workerID int,
 	extService ExternalServiceFunc,
 ) {
-	logger := p.logger.With("workerID", workerID)
+	log := slog.With("workerID", workerID)
+
 	for {
 		select {
 		case job, ok := <-p.jobs:
 
 			if !ok {
-				logger.Debug("Канал jobs закрыт, worker завершает работу")
+				log.Debug("Канал jobs закрыт, worker завершает работу")
 				return
 			}
-			logger.Debug("Ждем открытия канала")
+			log.Debug("Ждем открытия канала")
 			p.semaphore <- struct{}{}
-			logger.Debug("Бронируем канал")
+			log.Debug("Бронируем канал")
 			p.processJob(workerID, job, extService)
 			<-p.semaphore
-			logger.Debug("Канал открыт")
+			log.Debug("Канал открыт")
 
 		case <-p.done:
-			logger.Warn("Worker остановлен по отмене контекста", "workerID", workerID)
+			log.Warn("Worker остановлен по отмене контекста", "workerID", workerID)
 			return
 		}
 	}
@@ -213,8 +211,9 @@ func (p *WorkerPool) Start(
 	}
 }
 
+// Shutdown остнавливает воркерпул
 func (p *WorkerPool) Shutdown(ctx context.Context) error {
-	p.logger.Debug("Начало graceful shutdown")
+	slog.Debug("Начало graceful shutdown")
 
 	workersDone := make(chan struct{})
 	go func() {
@@ -227,7 +226,7 @@ func (p *WorkerPool) Shutdown(ctx context.Context) error {
 	select {
 	case <-workersDone:
 	case <-ctx.Done():
-		p.logger.Warn("Таймаут shutdown, принудительная остановка воркеров")
+		slog.Warn("Таймаут shutdown, принудительная остановка воркеров")
 		p.closeDone()
 		err = ctx.Err()
 	}
@@ -242,7 +241,7 @@ func (p *WorkerPool) Put(job Job) error {
 	case p.jobs <- job:
 		return nil
 	case <-p.done:
-		p.logger.Warn(
+		slog.Warn(
 			"Не удалось отправить job на обработку: контекст отменён",
 			"jobID", job.ID,
 		)
