@@ -53,5 +53,10 @@ func (s *stats) WorkerJobCounts() map[int]int {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	return s.workerJobs
+	jobCountsCopy := make(map[int]int, len(s.workerJobs))
+	for workerID, jobCount := range s.workerJobs {
+		jobCountsCopy[workerID] = jobCount
+	}
+
+	return jobCountsCopy
 }
