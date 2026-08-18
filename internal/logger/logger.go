@@ -24,6 +24,10 @@ const (
 )
 
 func init() {
+	initLogic()
+}
+
+func initLogic() {
 	replaceAttrFunc := func(groups []string, attr slog.Attr) slog.Attr {
 		if attr.Key == slog.TimeKey {
 			t := attr.Value.Time()
