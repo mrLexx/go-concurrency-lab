@@ -2,6 +2,12 @@
 
 [![Go Version](https://img.shields.io/badge/Go-1.26-blue.svg)](https://go.dev/)
 ![Go Concurrency ](https://img.shields.io/badge/Go-Concurrency-blue.svg)
+![CI](https://github.com/mrLexx/go-concurrency-lab/actions/workflows/go.yml/badge.svg)
+![Coverage](https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/mrLexx/d259eff64b03c387a366fbd4589b0719/raw/go-concurrency-lab.json)
+
+
+
+
 
 Учебный проект по конкурентному программированию на Go.
 
