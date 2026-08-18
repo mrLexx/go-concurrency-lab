@@ -53,8 +53,10 @@ type WorkerPool struct {
 // NewWorkerPool создание экземпляра воркпула
 func NewWorkerPool(
 	stats Stats,
+
 	workers,
 	limit,
+
 	jobCap,
 	resultCap,
 	errCap int,
@@ -170,25 +172,25 @@ func (p *WorkerPool) worker(
 	workerID int,
 	extService ExternalServiceFunc,
 ) {
-	log := slog.With("workerID", workerID)
+	sl := slog.With("workerID", workerID)
 
 	for {
 		select {
 		case job, ok := <-p.jobs:
 
 			if !ok {
-				log.Debug("Канал jobs закрыт, worker завершает работу")
+				sl.Debug("Канал jobs закрыт, worker завершает работу")
 				return
 			}
-			log.Debug("Ждем открытия канала")
+			sl.Debug("Ждем открытия канала")
 			p.semaphore <- struct{}{}
-			log.Debug("Бронируем канал")
+			sl.Debug("Бронируем канал")
 			p.processJob(workerID, job, extService)
 			<-p.semaphore
-			log.Debug("Канал открыт")
+			sl.Debug("Канал открыт")
 
 		case <-p.done:
-			log.Warn("Worker остановлен по отмене контекста", "workerID", workerID)
+			sl.Warn("Worker остановлен по отмене контекста", "workerID", workerID)
 			return
 		}
 	}

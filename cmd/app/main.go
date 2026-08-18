@@ -117,9 +117,9 @@ func main() {
 	}()
 
 	// Ждем когда задачи все отошлются и отработает воркерпул, для штатного завершения
-	poolFinished := make(chan struct{})
+	waitDone := make(chan struct{})
 	go func() {
-		defer close(poolFinished)
+		defer close(waitDone)
 		jobsWg.Wait()
 		pool.Wait()
 	}()
@@ -127,6 +127,7 @@ func main() {
 	// Смотрим что вперед завершится: или воркерпул или прилетит отмена контекста
 	select {
 	case <-ctx.Done():
+
 		slog.Info("Получен сигнал остановки")
 
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -135,7 +136,7 @@ func main() {
 		if err := pool.Shutdown(shutdownCtx); err != nil {
 			slog.Error("Остановка WorkPool", "err", err)
 		}
-	case <-poolFinished:
+	case <-waitDone:
 		slog.Info("Все job обработаны штатно")
 	}
 

@@ -1,6 +1,7 @@
 package stats
 
 import (
+	"maps"
 	"sync"
 	"sync/atomic"
 )
@@ -53,10 +54,8 @@ func (s *stats) WorkerJobCounts() map[int]int {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	jobCountsCopy := make(map[int]int, len(s.workerJobs))
-	for workerID, jobCount := range s.workerJobs {
-		jobCountsCopy[workerID] = jobCount
-	}
+	out := make(map[int]int, len(s.workerJobs))
+	maps.Copy(out, s.workerJobs)
 
-	return jobCountsCopy
+	return out
 }
